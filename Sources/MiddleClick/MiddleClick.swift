@@ -1,4 +1,5 @@
 import Cocoa
+import ApplicationServices
 import CoreGraphics
 import os.lock
 
@@ -25,11 +26,17 @@ private func MTRegisterContactFrameCallback(
 @_silgen_name("MTDeviceStart")
 private func MTDeviceStart(_ device: MTDeviceRef, _ unknown: Int32) -> Int32
 
+enum MapperError: Error {
+    case accessibilityPermissionMissing
+    case eventTapCreationFailed
+}
+
 final class FingerTracker: @unchecked Sendable {
     static let shared = FingerTracker()
 
     private var callback: MTContactCallback?
     private var lock = os_unfair_lock_s()
+    private var _started = false
     private var _fingerCount: Int32 = 0
     private var _lastCount: Int32 = 0
     private var _touchSequenceStartNs: UInt64 = 0
@@ -38,7 +45,15 @@ final class FingerTracker: @unchecked Sendable {
     private var _lastTapMiddleClickNs: UInt64 = 0
     private var _tapHandler: (() -> Void)?
 
-    func start() {
+    func startIfNeeded() {
+        os_unfair_lock_lock(&lock)
+        if _started {
+            os_unfair_lock_unlock(&lock)
+            return
+        }
+        _started = true
+        os_unfair_lock_unlock(&lock)
+
         let cb: MTContactCallback = { _, _, count, _, _ in
             let now = DispatchTime.now().uptimeNanoseconds
             FingerTracker.shared.updateFingerState(count: count, nowNs: now)
@@ -63,7 +78,7 @@ final class FingerTracker: @unchecked Sendable {
         return value
     }
 
-    func setTapHandler(_ handler: @escaping () -> Void) {
+    func setTapHandler(_ handler: (() -> Void)?) {
         os_unfair_lock_lock(&lock)
         _tapHandler = handler
         os_unfair_lock_unlock(&lock)
@@ -85,7 +100,7 @@ final class FingerTracker: @unchecked Sendable {
         _fingerCount = count
         _lastCount = count
 
-        // Track a touch sequence from first finger-down until all fingers are up.
+        // Track one touch sequence from first finger-down until all fingers are up.
         if previousCount == 0 && count > 0 {
             _touchSequenceStartNs = nowNs
             _touchSequenceHadThree = count >= 3
@@ -95,7 +110,7 @@ final class FingerTracker: @unchecked Sendable {
             _touchSequenceHadThree = true
         }
 
-        // Treat a quick sequence that included 3 fingers as a tap gesture.
+        // Quick sequence that included >= 3 fingers counts as a 3-finger tap.
         if previousCount > 0 && count == 0 && _touchSequenceStartNs != 0 {
             let durationNs = nowNs - _touchSequenceStartNs
             let tapMaxNs = UInt64(0.25 * 1_000_000_000)
@@ -128,12 +143,27 @@ final class MiddleClickMapper {
     private var tap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var sendingMiddleSequence = false
+    private var enabled = false
 
-    func start() {
-        FingerTracker.shared.start()
+    var isEnabled: Bool { enabled }
+
+    func setEnabled(_ enabled: Bool) throws {
+        if enabled {
+            try start()
+        } else {
+            stop()
+        }
+    }
+
+    private func start() throws {
+        guard !enabled else { return }
+        guard AXIsProcessTrusted() else {
+            throw MapperError.accessibilityPermissionMissing
+        }
+
+        FingerTracker.shared.startIfNeeded()
         FingerTracker.shared.setTapHandler { [weak self] in
-            guard let self else { return }
-            self.sendMiddleClickAtPointer()
+            self?.sendMiddleClickAtPointer()
         }
 
         let mask =
@@ -146,8 +176,11 @@ final class MiddleClickMapper {
             options: .defaultTap,
             eventsOfInterest: CGEventMask(mask),
             callback: { _, type, event, userInfo in
+                guard let userInfo else {
+                    return Unmanaged.passUnretained(event)
+                }
                 let mapper = Unmanaged<MiddleClickMapper>
-                    .fromOpaque(userInfo!)
+                    .fromOpaque(userInfo)
                     .takeUnretainedValue()
                 return mapper.handle(type: type, event: event)
             },
@@ -157,15 +190,30 @@ final class MiddleClickMapper {
         )
 
         guard let tap else {
-            fputs("Failed to create event tap. Grant Accessibility access.\n", stderr)
-            exit(1)
+            throw MapperError.eventTapCreationFailed
         }
 
         runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-        CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
+        if let runLoopSource {
+            CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
+        }
         CGEvent.tapEnable(tap: tap, enable: true)
-        print("MiddleClick running: 3-finger click/tap -> middle click")
-        CFRunLoopRun()
+        sendingMiddleSequence = false
+        enabled = true
+    }
+
+    private func stop() {
+        FingerTracker.shared.setTapHandler(nil)
+        if let runLoopSource {
+            CFRunLoopRemoveSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
+        }
+        if let tap {
+            CFMachPortInvalidate(tap)
+        }
+        runLoopSource = nil
+        tap = nil
+        sendingMiddleSequence = false
+        enabled = false
     }
 
     private func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
@@ -195,11 +243,11 @@ final class MiddleClickMapper {
     }
 
     private func sendMiddleEventPair(from original: CGEvent) {
-        let location = original.location
-        sendMiddleEventPair(at: location)
+        sendMiddleEventPair(at: original.location)
     }
 
     private func sendMiddleClickAtPointer() {
+        guard enabled else { return }
         guard let event = CGEvent(source: nil) else { return }
         sendMiddleEventPair(at: event.location)
     }
@@ -225,12 +273,127 @@ final class MiddleClickMapper {
     }
 }
 
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    private let mapper = MiddleClickMapper()
+    private var statusItem: NSStatusItem?
+    private var toggleItem: NSMenuItem?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.setActivationPolicy(.accessory)
+        setupMenuBar()
+        enableMapperOnLaunch()
+    }
+
+    private func setupMenuBar() {
+        let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem.button?.font = NSFont.systemFont(ofSize: 14, weight: .semibold)
+        statusItem.button?.toolTip = "MiddleClick"
+
+        let menu = NSMenu()
+
+        let toggleItem = NSMenuItem(title: "", action: #selector(toggleEnabled), keyEquivalent: "")
+        toggleItem.target = self
+        menu.addItem(toggleItem)
+        self.toggleItem = toggleItem
+
+        let accessibilityItem = NSMenuItem(
+            title: "Open Accessibility Settings",
+            action: #selector(openAccessibilitySettings),
+            keyEquivalent: ""
+        )
+        accessibilityItem.target = self
+        menu.addItem(accessibilityItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        let quitItem = NSMenuItem(title: "Quit", action: #selector(quitApp), keyEquivalent: "q")
+        quitItem.target = self
+        menu.addItem(quitItem)
+
+        statusItem.menu = menu
+        self.statusItem = statusItem
+        updateToggleLabel()
+    }
+
+    private func enableMapperOnLaunch() {
+        do {
+            try mapper.setEnabled(true)
+            updateToggleLabel()
+        } catch MapperError.accessibilityPermissionMissing {
+            updateToggleLabel()
+            showPermissionAlert()
+        } catch MapperError.eventTapCreationFailed {
+            updateToggleLabel()
+            showEnableFailedAlert()
+        } catch {
+            updateToggleLabel()
+        }
+    }
+
+    private func updateToggleLabel() {
+        toggleItem?.title = mapper.isEnabled ? "Disable MiddleClick" : "Enable MiddleClick"
+        statusItem?.button?.title = mapper.isEnabled ? "•••" : "···"
+    }
+
+    @objc private func toggleEnabled() {
+        if mapper.isEnabled {
+            try? mapper.setEnabled(false)
+            updateToggleLabel()
+            return
+        }
+
+        do {
+            try mapper.setEnabled(true)
+            updateToggleLabel()
+        } catch MapperError.accessibilityPermissionMissing {
+            updateToggleLabel()
+            showPermissionAlert()
+        } catch MapperError.eventTapCreationFailed {
+            updateToggleLabel()
+            showEnableFailedAlert()
+        } catch {
+            updateToggleLabel()
+        }
+    }
+
+    @objc private func openAccessibilitySettings() {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") else {
+            return
+        }
+        NSWorkspace.shared.open(url)
+    }
+
+    @objc private func quitApp() {
+        NSApp.terminate(nil)
+    }
+
+    private func showPermissionAlert() {
+        let alert = NSAlert()
+        alert.messageText = "Accessibility Permission Needed"
+        alert.informativeText = "Enable MiddleClick in Privacy & Security > Accessibility, then re-enable from the menu bar."
+        alert.addButton(withTitle: "Open Settings")
+        alert.addButton(withTitle: "OK")
+        if alert.runModal() == .alertFirstButtonReturn {
+            openAccessibilitySettings()
+        }
+    }
+
+    private func showEnableFailedAlert() {
+        let alert = NSAlert()
+        alert.messageText = "Could Not Enable MiddleClick"
+        alert.informativeText = "MiddleClick has Accessibility permission, but macOS refused the event tap. Try quitting/reopening MiddleClick. If it persists, remove and re-add MiddleClick in Accessibility settings."
+        alert.addButton(withTitle: "OK")
+        _ = alert.runModal()
+    }
+}
+
 @main
 struct MiddleClick {
     static func main() {
-        // AppKit permission prompts and event taps behave more reliably
-        // from a regular process with an NSApplication instance.
-        _ = NSApplication.shared
-        MiddleClickMapper().start()
+        let app = NSApplication.shared
+        let delegate = AppDelegate()
+        app.delegate = delegate
+        app.run()
     }
 }
