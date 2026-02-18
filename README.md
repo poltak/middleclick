@@ -98,3 +98,13 @@ Each release:
 brew tap <your-user>/tap
 brew install --cask middleclick-poltak
 ```
+
+### One-command tap update
+
+Use:
+
+```bash
+./scripts/publish-cask.sh vX.Y.Z
+```
+
+This script downloads `middleclick-poltak.rb` from the specified GitHub release, updates `poltak/homebrew-tap`, commits, and pushes.
