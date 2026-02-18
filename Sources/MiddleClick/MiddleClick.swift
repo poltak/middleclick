@@ -333,7 +333,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func updateToggleLabel() {
         toggleItem?.title = mapper.isEnabled ? "Disable MiddleClick" : "Enable MiddleClick"
-        statusItem?.button?.title = mapper.isEnabled ? "•••" : "···"
+        statusItem?.button?.title = mapper.isEnabled ? "•••" : "⊘⊘⊘"
     }
 
     @objc private func toggleEnabled() {
