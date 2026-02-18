@@ -31,11 +31,11 @@ final class FingerTracker: @unchecked Sendable {
     private var callback: MTContactCallback?
     private var lock = os_unfair_lock_s()
     private var _fingerCount: Int32 = 0
-    private var _lastThreeFingerTimeNs: UInt64 = 0
     private var _lastCount: Int32 = 0
     private var _touchSequenceStartNs: UInt64 = 0
     private var _touchSequenceHadThree = false
     private var _lastPhysicalThreeFingerClickNs: UInt64 = 0
+    private var _lastTapMiddleClickNs: UInt64 = 0
     private var _tapHandler: (() -> Void)?
 
     func start() {
@@ -76,15 +76,6 @@ final class FingerTracker: @unchecked Sendable {
         os_unfair_lock_unlock(&lock)
     }
 
-    func hadThreeFingersRecently(within seconds: Double) -> Bool {
-        let now = DispatchTime.now().uptimeNanoseconds
-        let thresholdNs = UInt64(seconds * 1_000_000_000)
-        os_unfair_lock_lock(&lock)
-        let recent = _lastThreeFingerTimeNs != 0 && (now - _lastThreeFingerTimeNs) <= thresholdNs
-        os_unfair_lock_unlock(&lock)
-        return recent
-    }
-
     private func updateFingerState(count: Int32, nowNs: UInt64) {
         var fireTap = false
         var tapHandler: (() -> Void)?
@@ -100,9 +91,6 @@ final class FingerTracker: @unchecked Sendable {
             _touchSequenceHadThree = count >= 3
         }
 
-        if count == 3 {
-            _lastThreeFingerTimeNs = nowNs
-        }
         if count >= 3 {
             _touchSequenceHadThree = true
         }
@@ -112,12 +100,17 @@ final class FingerTracker: @unchecked Sendable {
             let durationNs = nowNs - _touchSequenceStartNs
             let tapMaxNs = UInt64(0.25 * 1_000_000_000)
             let suppressAfterPhysicalClickNs = UInt64(0.35 * 1_000_000_000)
+            let tapFireCooldownNs = UInt64(0.16 * 1_000_000_000)
             let afterPhysicalClick =
                 _lastPhysicalThreeFingerClickNs != 0 &&
                 (nowNs - _lastPhysicalThreeFingerClickNs) <= suppressAfterPhysicalClickNs
+            let insideTapCooldown =
+                _lastTapMiddleClickNs != 0 &&
+                (nowNs - _lastTapMiddleClickNs) <= tapFireCooldownNs
 
-            if _touchSequenceHadThree && durationNs <= tapMaxNs && !afterPhysicalClick {
+            if _touchSequenceHadThree && durationNs <= tapMaxNs && !afterPhysicalClick && !insideTapCooldown {
                 fireTap = true
+                _lastTapMiddleClickNs = nowNs
                 tapHandler = _tapHandler
             }
             _touchSequenceStartNs = 0
@@ -185,9 +178,8 @@ final class MiddleClickMapper {
         let isLeftUp = type == .leftMouseUp
 
         let isThreeFingerClick = FingerTracker.shared.currentFingerCount() == 3
-        let isRecentThreeFingerTap = FingerTracker.shared.hadThreeFingersRecently(within: 0.14)
 
-        if isLeftDown && (isThreeFingerClick || isRecentThreeFingerTap) {
+        if isLeftDown && isThreeFingerClick {
             sendMiddleEventPair(from: event)
             FingerTracker.shared.notePhysicalThreeFingerClick()
             sendingMiddleSequence = true
