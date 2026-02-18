@@ -34,4 +34,6 @@ jobs:
           files: |
             dist/MiddleClick.app.zip
             dist/MiddleClick.app.zip.sha256
+            dist/MiddleClick.dmg
+            dist/MiddleClick.dmg.sha256
             dist/middleclick.rb

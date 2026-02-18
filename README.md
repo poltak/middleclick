@@ -71,14 +71,18 @@ The GitHub Actions workflow at `/Users/jon/Documents/github/middleclick/.github/
 - Build and sign `MiddleClick.app`
 - Create `dist/MiddleClick.app.zip`
 - Generate `dist/MiddleClick.app.zip.sha256`
+- Create `dist/MiddleClick.dmg`
+- Generate `dist/MiddleClick.dmg.sha256`
 - Generate `dist/middleclick.rb` (Homebrew cask file)
-- Publish all three files to the GitHub Release
+- Publish all files to the GitHub Release
 
 For local dry-runs of release packaging:
 
 ```bash
 ./scripts/release-build.sh v1.2.3 123
 ```
+
+This local release build also produces a DMG (`dist/MiddleClick.dmg`) for direct downloads.
 
 ## Homebrew (Custom Tap)
 
