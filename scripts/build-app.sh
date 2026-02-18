@@ -8,9 +8,34 @@ APP_DIR="$ROOT_DIR/dist/${APP_NAME}.app"
 BIN_PATH="$ROOT_DIR/.build/release/${APP_NAME}"
 INSTALL_APP_DIR="/Applications/${APP_NAME}.app"
 INSTALL_TO_APPLICATIONS=false
+VERSION="1.0.0"
+BUILD_NUMBER="1"
 
-if [[ "${1:-}" == "--install" ]]; then
-  INSTALL_TO_APPLICATIONS=true
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --install)
+      INSTALL_TO_APPLICATIONS=true
+      shift
+      ;;
+    --version)
+      VERSION="${2:-}"
+      shift 2
+      ;;
+    --build-number)
+      BUILD_NUMBER="${2:-}"
+      shift 2
+      ;;
+    *)
+      echo "Unknown argument: $1" >&2
+      echo "Usage: $0 [--install] [--version X.Y.Z] [--build-number N]" >&2
+      exit 1
+      ;;
+  esac
+done
+
+if [[ -z "$VERSION" || -z "$BUILD_NUMBER" ]]; then
+  echo "--version and --build-number must be non-empty when provided." >&2
+  exit 1
 fi
 
 cd "$ROOT_DIR"
@@ -37,9 +62,9 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
     <key>CFBundleIdentifier</key>
     <string>${BUNDLE_ID}</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>${BUILD_NUMBER}</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
+    <string>${VERSION}</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>LSMinimumSystemVersion</key>
