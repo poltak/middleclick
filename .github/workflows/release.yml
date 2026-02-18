@@ -36,4 +36,4 @@ jobs:
             dist/MiddleClick.app.zip.sha256
             dist/MiddleClick.dmg
             dist/MiddleClick.dmg.sha256
-            dist/middleclick.rb
+            dist/middleclick-poltak.rb

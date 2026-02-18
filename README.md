@@ -73,7 +73,7 @@ The GitHub Actions workflow at `/Users/jon/Documents/github/middleclick/.github/
 - Generate `dist/MiddleClick.app.zip.sha256`
 - Create `dist/MiddleClick.dmg`
 - Generate `dist/MiddleClick.dmg.sha256`
-- Generate `dist/middleclick.rb` (Homebrew cask file)
+- Generate `dist/middleclick-poltak.rb` (Homebrew cask file)
 - Publish all files to the GitHub Release
 
 For local dry-runs of release packaging:
@@ -90,11 +90,11 @@ Use a cask in your own tap, for example `homebrew-tap/Casks/middleclick.rb`.
 
 Each release:
 
-1. Copy the generated `/Users/jon/Documents/github/middleclick/dist/middleclick.rb` into your tap repo at `Casks/middleclick.rb`.
+1. Copy the generated `/Users/jon/Documents/github/middleclick/dist/middleclick-poltak.rb` into your tap repo at `Casks/middleclick-poltak.rb`.
 2. Commit and push in the tap repo.
 3. Users can install with:
 
 ```bash
 brew tap <your-user>/tap
-brew install --cask middleclick
+brew install --cask middleclick-poltak
 ```

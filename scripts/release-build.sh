@@ -9,7 +9,9 @@ CHECKSUM_PATH="$ROOT_DIR/dist/${ARCHIVE_NAME}.sha256"
 DMG_NAME="${APP_NAME}.dmg"
 DMG_PATH="$ROOT_DIR/dist/${DMG_NAME}"
 DMG_CHECKSUM_PATH="$ROOT_DIR/dist/${DMG_NAME}.sha256"
-CASK_PATH="$ROOT_DIR/dist/middleclick.rb"
+CASK_TOKEN="middleclick-poltak"
+CASK_FILE="${CASK_TOKEN}.rb"
+CASK_PATH="$ROOT_DIR/dist/${CASK_FILE}"
 
 TAG="${1:-}"
 if [[ -z "$TAG" ]]; then
@@ -46,14 +48,14 @@ printf '%s  %s\n' "$DMG_SHA256" "$DMG_NAME" > "$DMG_CHECKSUM_PATH"
 
 GITHUB_REPO="${GITHUB_REPOSITORY:-}"
 if [[ -z "$GITHUB_REPO" ]]; then
-  GITHUB_REPO="jon/middleclick"
+  GITHUB_REPO="poltak/middleclick"
 fi
 OWNER="${GITHUB_REPO%%/*}"
 
 DOWNLOAD_URL="https://github.com/${GITHUB_REPO}/releases/download/${TAG_NAME}/${ARCHIVE_NAME}"
 
 cat > "$CASK_PATH" <<CASK
-cask "middleclick" do
+cask "${CASK_TOKEN}" do
   version "${VERSION}"
   sha256 "${SHA256}"
 
