@@ -50,8 +50,6 @@ GITHUB_REPO="${GITHUB_REPOSITORY:-}"
 if [[ -z "$GITHUB_REPO" ]]; then
   GITHUB_REPO="poltak/middleclick"
 fi
-OWNER="${GITHUB_REPO%%/*}"
-
 DOWNLOAD_URL="https://github.com/${GITHUB_REPO}/releases/download/${TAG_NAME}/${ARCHIVE_NAME}"
 
 cat > "$CASK_PATH" <<CASK
@@ -59,8 +57,7 @@ cask "${CASK_TOKEN}" do
   version "${VERSION}"
   sha256 "${SHA256}"
 
-  url "${DOWNLOAD_URL}",
-      verified: "github.com/${OWNER}/"
+  url "${DOWNLOAD_URL}"
   name "MiddleClick"
   desc "Three-finger trackpad click/tap to middle click remapper"
   homepage "https://github.com/${GITHUB_REPO}"
