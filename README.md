@@ -5,15 +5,16 @@ Simple macOS menu-bar app that turns a **3-finger trackpad click or tap** into a
 ## What it does
 
 - Runs as a standard `.app` (`LSUIElement` menu-bar utility).
-- Adds a menu-bar item with:
-- Enable/Disable remapping
-- Open Accessibility Settings
-- Quit
-- Watches global left mouse down/up events.
-- Tracks current trackpad finger count via `MultitouchSupport` (private framework).
-- If finger count is exactly 3 on left-click down, or a quick 3-finger touch ends (tap gesture):
-- Suppresses that left click.
-- Emits a middle-button down/up pair at the same pointer location.
+- Recognizes a three-finger tap only when exactly three fingers arrive together,
+  remain nearly stationary, and lift within the gesture time limit.
+- Converts a physical three-finger press into middle-button down, drag, and up
+  events, preserving the pointer location and modifier keys.
+- Tracks each multitouch device independently and reconnects devices after
+  sleep or connection changes.
+- Pauses remapping when macOS Three Finger Drag or three-finger Look Up is on,
+  because those system gestures consume the same input.
+- Recovers from event-tap timeouts and permission changes without leaving the
+  middle button held.
 
 ## Build App Bundle
 
@@ -56,6 +57,17 @@ If middle-clicking does not work in some apps, also enable:
 
 - Uses a private Apple framework (`MultitouchSupport`), so this is not App Store safe.
 - Keep the app running in the menu bar to keep remapping active.
+- Turn off Three Finger Drag and three-finger Look Up in System Settings to use
+  the three-finger middle-click gesture.
+
+## Tests
+
+```bash
+swift test
+```
+
+The tests cover valid staggered taps, swipes, extra fingers, delayed fingers,
+rapid independent taps, and physical-click consumption.
 
 ## GitHub Releases
 

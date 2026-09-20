@@ -75,6 +75,8 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
     <string>13.0</string>
     <key>LSUIElement</key>
     <true/>
+    <key>NSAccessibilityUsageDescription</key>
+    <string>MiddleClick needs Accessibility access to turn three-finger gestures into middle mouse clicks.</string>
 </dict>
 </plist>
 PLIST

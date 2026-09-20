@@ -5,9 +5,10 @@ import PackageDescription
 
 let package = Package(
     name: "MiddleClick",
+    platforms: [
+        .macOS(.v13),
+    ],
     targets: [
-        // Targets are the basic building blocks of a package, defining a module or a test suite.
-        // Targets can depend on other targets in this package and products from dependencies.
         .executableTarget(
             name: "MiddleClick",
             linkerSettings: [
@@ -16,6 +17,10 @@ let package = Package(
                     "-framework", "MultitouchSupport",
                 ]),
             ]
+        ),
+        .testTarget(
+            name: "MiddleClickTests",
+            dependencies: ["MiddleClick"]
         ),
     ]
 )
