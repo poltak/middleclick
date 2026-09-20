@@ -156,9 +156,11 @@ final class MouseEventMapper: @unchecked Sendable {
     private func emitTap() {
         guard isEnabled, tapMappingAllowed, activeSourceButton == nil else { return }
         emittedTapCount &+= 1
-        let location = CGEvent(source: nil)?.location ?? NSEvent.mouseLocation
-        postMiddleEvent(type: .otherMouseDown, at: location, flags: [])
-        postMiddleEvent(type: .otherMouseUp, at: location, flags: [])
+        let pointerEvent = CGEvent(source: nil)
+        let location = pointerEvent?.location ?? NSEvent.mouseLocation
+        let flags = pointerEvent?.flags ?? []
+        postMiddleEvent(type: .otherMouseDown, at: location, flags: flags)
+        postMiddleEvent(type: .otherMouseUp, at: location, flags: flags)
     }
 
     private func releaseMiddleButtonIfNeeded() {
@@ -186,6 +188,7 @@ final class MouseEventMapper: @unchecked Sendable {
         ) else { return }
         event.flags = flags
         event.setIntegerValueField(.mouseEventButtonNumber, value: 2)
+        event.setIntegerValueField(.mouseEventClickState, value: 1)
         event.post(tap: .cghidEventTap)
     }
 

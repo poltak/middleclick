@@ -13,19 +13,18 @@ struct TouchFrame: Equatable, Sendable {
 
 struct GestureConfiguration: Equatable, Sendable {
     var fingerCount = 3
-    var maximumDuration: TimeInterval = 0.30
-    var maximumFingerArrivalInterval: TimeInterval = 0.18
-    var maximumMovement: Float = 0.045
+    var maximumDuration: TimeInterval = 0.45
+    var maximumMovement: Float = 0.05
 }
 
 /// Recognizes one complete gesture on one physical multitouch device.
 final class ThreeFingerGestureRecognizer: @unchecked Sendable {
     private struct Sequence: Sendable {
         let startedAt: TimeInterval
-        var origins: [Int32: SIMD2<Float>]
         var currentContactCount: Int
         var reachedRequiredCount = false
         var maximumContactCount: Int
+        var referencePositions: [SIMD2<Float>]?
         var tapInvalid = false
         var sawExtraFinger = false
         var consumedByMouseClick = false
@@ -43,8 +42,7 @@ final class ThreeFingerGestureRecognizer: @unchecked Sendable {
         return !sequence.consumedByMouseClick &&
             !sequence.sawExtraFinger &&
             sequence.currentContactCount == configuration.fingerCount &&
-            sequence.maximumContactCount == configuration.fingerCount &&
-            sequence.origins.count == configuration.fingerCount
+            sequence.maximumContactCount == configuration.fingerCount
     }
 
     func claimPhysicalClick() -> Bool {
@@ -62,9 +60,9 @@ final class ThreeFingerGestureRecognizer: @unchecked Sendable {
         if sequence == nil {
             sequence = Sequence(
                 startedAt: frame.time,
-                origins: [:],
                 currentContactCount: frame.contacts.count,
-                maximumContactCount: frame.contacts.count
+                maximumContactCount: frame.contacts.count,
+                referencePositions: nil
             )
         }
 
@@ -81,28 +79,16 @@ final class ThreeFingerGestureRecognizer: @unchecked Sendable {
             current.sawExtraFinger = true
         }
 
-        for contact in frame.contacts {
-            if let origin = current.origins[contact.id] {
-                if simd_distance(origin, contact.position) > configuration.maximumMovement {
-                    current.tapInvalid = true
-                }
-            } else {
-                current.origins[contact.id] = contact.position
-            }
-        }
-        if current.origins.count > configuration.fingerCount {
-            current.tapInvalid = true
-            current.sawExtraFinger = true
-        }
-
-        if frame.contacts.count == configuration.fingerCount &&
-            !current.reachedRequiredCount
-        {
-            if elapsed <= configuration.maximumFingerArrivalInterval {
-                current.reachedRequiredCount = true
-            } else {
+        if let referencePositions = current.referencePositions {
+            let positions = frame.contacts.map(\.position)
+            if minimumMaximumDistance(from: positions, to: referencePositions) >
+                configuration.maximumMovement
+            {
                 current.tapInvalid = true
             }
+        } else if frame.contacts.count == configuration.fingerCount {
+            current.referencePositions = frame.contacts.map(\.position)
+            current.reachedRequiredCount = true
         }
 
         sequence = current
@@ -123,5 +109,34 @@ final class ThreeFingerGestureRecognizer: @unchecked Sendable {
             !current.tapInvalid &&
             !current.consumedByMouseClick &&
             elapsed <= configuration.maximumDuration
+    }
+
+    /// Finds the best identity-independent assignment of current contacts to
+    /// their original positions. Contact IDs can change while fingers lift.
+    private func minimumMaximumDistance(
+        from positions: [SIMD2<Float>],
+        to references: [SIMD2<Float>]
+    ) -> Float {
+        guard !positions.isEmpty else { return 0 }
+        var best = Float.infinity
+
+        func search(_ index: Int, _ available: [Int], _ maximum: Float) {
+            guard maximum < best else { return }
+            if index == positions.count {
+                best = maximum
+                return
+            }
+            for referenceIndex in available {
+                let distance = simd_distance(positions[index], references[referenceIndex])
+                search(
+                    index + 1,
+                    available.filter { $0 != referenceIndex },
+                    max(maximum, distance)
+                )
+            }
+        }
+
+        search(0, Array(references.indices), 0)
+        return best
     }
 }

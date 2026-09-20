@@ -19,14 +19,43 @@ enum TouchContactAdapter {
     }
 }
 
-final class TouchInputController: @unchecked Sendable {
-    static let shared = TouchInputController()
-    private static let logger = Logger(subsystem: "com.jon.middleclick", category: "touch-input")
-
-    private struct PendingTap {
+struct PendingTapCoordinator: Sendable {
+    struct PendingTap: Sendable {
         let id: UInt64
         let deadline: TimeInterval
     }
+
+    private(set) var pending: [PendingTap] = []
+    private var nextID: UInt64 = 0
+
+    mutating func schedule(at time: TimeInterval, delay: TimeInterval) -> UInt64 {
+        nextID &+= 1
+        pending.append(PendingTap(id: nextID, deadline: time + delay))
+        return nextID
+    }
+
+    mutating func claim(at time: TimeInterval) -> Bool {
+        pending.removeAll { $0.deadline < time }
+        guard !pending.isEmpty else { return false }
+        pending.removeFirst()
+        return true
+    }
+
+    mutating func fire(id: UInt64) -> Bool {
+        guard let index = pending.firstIndex(where: { $0.id == id }) else { return false }
+        pending.remove(at: index)
+        return true
+    }
+
+    mutating func cancelAll() {
+        pending.removeAll()
+    }
+}
+
+final class TouchInputController: @unchecked Sendable {
+    static let shared = TouchInputController()
+    private static let logger = Logger(subsystem: "com.jon.middleclick", category: "touch-input")
+    private static let nativeTapCoordinationDelay: TimeInterval = 0.12
 
     private var lock = os_unfair_lock_s()
     private var running = false
@@ -34,8 +63,7 @@ final class TouchInputController: @unchecked Sendable {
     private var devices: [MTDeviceRef] = []
     private var recognizers: [UInt: ThreeFingerGestureRecognizer] = [:]
     private var tapHandler: (() -> Void)?
-    private var pendingTap: PendingTap?
-    private var nextTapID: UInt64 = 0
+    private var tapCoordinator = PendingTapCoordinator()
     private var startedDeviceCount = 0
     private var callbackFrameCount: UInt64 = 0
     private var unmatchedFrameCount: UInt64 = 0
@@ -67,7 +95,7 @@ final class TouchInputController: @unchecked Sendable {
         os_unfair_lock_lock(&lock)
         running = false
         tapHandler = nil
-        pendingTap = nil
+        tapCoordinator.cancelAll()
         startedDeviceCount = 0
         activeContactCount = 0
         let devicesToStop = devices
@@ -172,16 +200,11 @@ final class TouchInputController: @unchecked Sendable {
         for key in recognizers.keys {
             guard let recognizer = recognizers[key] else { continue }
             if recognizer.claimPhysicalClick() {
-                pendingTap = nil
                 return true
             }
         }
 
-        if let pendingTap, now <= pendingTap.deadline {
-            self.pendingTap = nil
-            return true
-        }
-        return false
+        return tapCoordinator.claim(at: now)
     }
 
     private func receive(
@@ -220,9 +243,10 @@ final class TouchInputController: @unchecked Sendable {
             let recognizedTap = recognizer.process(frame)
             if recognizedTap {
                 recognizedTapCount &+= 1
-                nextTapID &+= 1
-                let id = nextTapID
-                pendingTap = PendingTap(id: id, deadline: now + 0.035)
+                let id = tapCoordinator.schedule(
+                    at: now,
+                    delay: Self.nativeTapCoordinationDelay
+                )
                 tapID = id
             }
         } else if running {
@@ -234,7 +258,9 @@ final class TouchInputController: @unchecked Sendable {
         os_unfair_lock_unlock(&lock)
 
         if let tapID {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.035) { [weak self] in
+            DispatchQueue.main.asyncAfter(
+                deadline: .now() + Self.nativeTapCoordinationDelay
+            ) { [weak self] in
                 self?.firePendingTap(id: tapID)
             }
         }
@@ -243,8 +269,7 @@ final class TouchInputController: @unchecked Sendable {
     private func firePendingTap(id: UInt64) {
         var handler: (() -> Void)?
         os_unfair_lock_lock(&lock)
-        if running, pendingTap?.id == id {
-            pendingTap = nil
+        if running, tapCoordinator.fire(id: id) {
             handler = tapHandler
         }
         os_unfair_lock_unlock(&lock)

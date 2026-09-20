@@ -31,11 +31,33 @@ struct GestureRecognizerTests {
         #expect(!recognizer.process(frame(0.10, [])))
     }
 
-    @Test func fourDistinctFingersAcrossFramesAreRejected() {
+    @Test func fingerIdentityChangesDoNotRejectTap() {
         let recognizer = ThreeFingerGestureRecognizer()
 
         #expect(!recognizer.process(frame(0.00, contacts(atX: 0.2))))
         #expect(!recognizer.process(frame(0.04, [contact(2), contact(3), contact(4)])))
+        #expect(recognizer.process(frame(0.10, [])))
+    }
+
+    @Test func stationaryCentroidPinchIsRejected() {
+        let recognizer = ThreeFingerGestureRecognizer()
+
+        #expect(!recognizer.process(frame(0.00, [
+            contact(1, x: 0.1), contact(2, x: 0.2), contact(3, x: 0.3),
+        ])))
+        #expect(!recognizer.process(frame(0.05, [
+            contact(1, x: 0.16), contact(2, x: 0.2), contact(3, x: 0.24),
+        ])))
+        #expect(!recognizer.process(frame(0.10, [])))
+    }
+
+    @Test func movementDuringStaggeredLiftoffIsRejected() {
+        let recognizer = ThreeFingerGestureRecognizer()
+
+        #expect(!recognizer.process(frame(0.00, contacts(atX: 0.2))))
+        #expect(!recognizer.process(frame(0.05, [
+            contact(1, x: 0.2), contact(2, x: 0.3),
+        ])))
         #expect(!recognizer.process(frame(0.10, [])))
     }
 
@@ -64,12 +86,22 @@ struct GestureRecognizerTests {
         #expect(!recognizer.process(frame(1.10, [])))
     }
 
-    @Test func lateThirdFingerIsRejected() {
+    @Test func staggeredArrivalAndLiftoffAreRecognized() {
         let recognizer = ThreeFingerGestureRecognizer()
 
         #expect(!recognizer.process(frame(0.00, [contact(1)])))
         #expect(!recognizer.process(frame(0.20, contacts(atX: 0.2))))
-        #expect(!recognizer.process(frame(0.25, [])))
+        #expect(!recognizer.process(frame(0.28, [contact(2), contact(3)])))
+        #expect(!recognizer.process(frame(0.32, [contact(3)])))
+        #expect(recognizer.process(frame(0.36, [])))
+    }
+
+    @Test func sequenceLongerThanTapLimitIsRejected() {
+        let recognizer = ThreeFingerGestureRecognizer()
+
+        #expect(!recognizer.process(frame(0.00, [contact(1)])))
+        #expect(!recognizer.process(frame(0.30, contacts(atX: 0.2))))
+        #expect(!recognizer.process(frame(0.50, [])))
     }
 
     @Test func twoIndependentTapsAreBothRecognized() {
@@ -91,6 +123,33 @@ struct GestureRecognizerTests {
 
     private func contacts(atX x: Float) -> [TouchContact] {
         [contact(1, x: x), contact(2, x: x), contact(3, x: x)]
+    }
+}
+
+@Suite("Pending tap coordination")
+struct PendingTapCoordinatorTests {
+    @Test func rapidTapsAreDeliveredIndependently() {
+        var coordinator = PendingTapCoordinator()
+        let first = coordinator.schedule(at: 0.08, delay: 0.12)
+        let second = coordinator.schedule(at: 0.18, delay: 0.12)
+
+        let firedFirst = coordinator.fire(id: first)
+        let firedSecond = coordinator.fire(id: second)
+        #expect(firedFirst)
+        #expect(firedSecond)
+    }
+
+    @Test func nativeClicksConsumeOnePendingTap() {
+        var coordinator = PendingTapCoordinator()
+        let first = coordinator.schedule(at: 0.08, delay: 0.12)
+        let second = coordinator.schedule(at: 0.18, delay: 0.12)
+
+        let claimed = coordinator.claim(at: 0.19)
+        let firedFirst = coordinator.fire(id: first)
+        let firedSecond = coordinator.fire(id: second)
+        #expect(claimed)
+        #expect(!firedFirst)
+        #expect(firedSecond)
     }
 }
 
