@@ -66,19 +66,22 @@ if [[ ! -d "$TAP_DIR/.git" ]]; then
 fi
 
 mkdir -p "$TAP_DIR/Casks"
-TARGET_PATH="$TAP_DIR/Casks/${CASK_NAME}"
+TARGET_RELATIVE_PATH="Casks/${CASK_NAME}"
+TARGET_PATH="$TAP_DIR/${TARGET_RELATIVE_PATH}"
 
 echo "Downloading $CASK_URL"
 curl -fsSL "$CASK_URL" -o "$TARGET_PATH"
 
 cd "$TAP_DIR"
 
-if git diff --quiet -- "$TARGET_PATH" && git diff --cached --quiet -- "$TARGET_PATH"; then
+if git diff --quiet -- "$TARGET_RELATIVE_PATH" &&
+  git diff --cached --quiet -- "$TARGET_RELATIVE_PATH"
+then
   echo "No cask changes detected for ${TAG}. Nothing to commit."
   exit 0
 fi
 
-git add "$TARGET_PATH"
+git add "$TARGET_RELATIVE_PATH"
 git commit -m "middleclick-poltak ${TAG}"
 
 if [[ "$PUSH" == "true" ]]; then
