@@ -76,15 +76,14 @@ states, extra fingers, rapid independent taps, and physical-click consumption.
 
 ## GitHub Releases
 
-Create a tag like `v1.2.3` and push it:
-
-```bash
-git tag v1.2.3
-git push origin v1.2.3
-```
+Every push to `main` runs the tests and publishes a GitHub release. The workflow
+increments the patch component of the latest semantic-version tag, so a push
+after `v0.2.0` creates `v0.2.1` automatically.
 
 The GitHub Actions workflow at `/Users/jon/Documents/github/middleclick/.github/workflows/release.yml` will:
 
+- Run the test suite
+- Create the next patch-version tag
 - Build and sign `MiddleClick.app`
 - Create `dist/MiddleClick.app.zip`
 - Generate `dist/MiddleClick.app.zip.sha256`

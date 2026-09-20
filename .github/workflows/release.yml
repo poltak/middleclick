@@ -1,12 +1,17 @@
-name: Release
+name: Release main
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches:
+      - main
+  workflow_dispatch:
 
 permissions:
   contents: write
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
 
 jobs:
   build-and-release:
@@ -14,23 +19,53 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Choose next version
+        id: version
+        shell: bash
+        run: |
+          latest_tag="$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-version:refname | head -n 1)"
+          if [[ -z "$latest_tag" ]]; then
+            latest_tag="v0.0.0"
+          fi
+
+          version="${latest_tag#v}"
+          IFS=. read -r major minor patch <<< "$version"
+          if [[ ! "$major" =~ ^[0-9]+$ || ! "$minor" =~ ^[0-9]+$ || ! "$patch" =~ ^[0-9]+$ ]]; then
+            echo "Latest release tag is not semantic versioning: $latest_tag" >&2
+            exit 1
+          fi
+
+          next_tag="v${major}.${minor}.$((patch + 1))"
+          echo "previous_tag=$latest_tag" >> "$GITHUB_OUTPUT"
+          echo "tag=$next_tag" >> "$GITHUB_OUTPUT"
+          echo "Releasing $next_tag after $latest_tag"
 
       - name: Select latest stable Xcode
         uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: latest-stable
 
+      - name: Test
+        run: swift test
+
       - name: Build release assets
         env:
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
-          ./scripts/release-build.sh "${GITHUB_REF_NAME}" "${GITHUB_RUN_NUMBER}"
+          ./scripts/release-build.sh "${{ steps.version.outputs.tag }}" "${GITHUB_RUN_NUMBER}"
 
       - name: Publish GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          previous_tag: ${{ steps.version.outputs.previous_tag }}
           generate_release_notes: true
+          fail_on_unmatched_files: true
           files: |
             dist/MiddleClick.app.zip
             dist/MiddleClick.app.zip.sha256
