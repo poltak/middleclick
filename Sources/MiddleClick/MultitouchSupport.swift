@@ -1,70 +1,27 @@
 import CoreFoundation
 import Foundation
+import MultitouchSupportShim
+import os
 import os.lock
 
-typealias MTDeviceRef = OpaquePointer
-
-private struct MTPoint {
-    var x: Float
-    var y: Float
+struct TouchInputDiagnostics: Sendable {
+    let deviceCount: Int
+    let startedDeviceCount: Int
+    let callbackFrameCount: UInt64
+    let unmatchedFrameCount: UInt64
+    let activeContactCount: Int
+    let recognizedTapCount: UInt64
 }
 
-private struct MTVector {
-    var position: MTPoint
-    var velocity: MTPoint
+enum TouchContactAdapter {
+    static func isTouching(state: UInt32) -> Bool {
+        state == MTTouchStateMakeTouch || state == MTTouchStateTouching
+    }
 }
-
-/// The 96-byte contact record used by MultitouchSupport.framework.
-private struct MTTouch {
-    var frame: Int32
-    var timestamp: Double
-    var pathIndex: Int32
-    var state: UInt32
-    var fingerID: Int32
-    var handID: Int32
-    var normalizedVector: MTVector
-    var zTotal: Float
-    var field9: Int32
-    var angle: Float
-    var majorAxis: Float
-    var minorAxis: Float
-    var absoluteVector: MTVector
-    var field14: Int32
-    var field15: Int32
-    var zDensity: Float
-}
-
-private typealias MTContactCallback = @convention(c) (
-    MTDeviceRef?,
-    UnsafeMutableRawPointer?,
-    Int32,
-    Double,
-    Int32
-) -> Void
-
-@_silgen_name("MTDeviceCreateList")
-private func MTDeviceCreateList() -> CFArray
-
-@_silgen_name("MTRegisterContactFrameCallback")
-private func MTRegisterContactFrameCallback(
-    _ device: MTDeviceRef,
-    _ callback: MTContactCallback
-)
-
-@_silgen_name("MTUnregisterContactFrameCallback")
-private func MTUnregisterContactFrameCallback(
-    _ device: MTDeviceRef,
-    _ callback: MTContactCallback
-)
-
-@_silgen_name("MTDeviceStart")
-private func MTDeviceStart(_ device: MTDeviceRef, _ mode: Int32) -> Int32
-
-@_silgen_name("MTDeviceStop")
-private func MTDeviceStop(_ device: MTDeviceRef) -> Int32
 
 final class TouchInputController: @unchecked Sendable {
     static let shared = TouchInputController()
+    private static let logger = Logger(subsystem: "com.jon.middleclick", category: "touch-input")
 
     private struct PendingTap {
         let id: UInt64
@@ -79,8 +36,13 @@ final class TouchInputController: @unchecked Sendable {
     private var tapHandler: (() -> Void)?
     private var pendingTap: PendingTap?
     private var nextTapID: UInt64 = 0
+    private var startedDeviceCount = 0
+    private var callbackFrameCount: UInt64 = 0
+    private var unmatchedFrameCount: UInt64 = 0
+    private var activeContactCount = 0
+    private var recognizedTapCount: UInt64 = 0
 
-    private static let callback: MTContactCallback = { device, touches, count, _, _ in
+    private static let callback: MTFrameCallbackFunction = { device, touches, count, _, _ in
         guard let device else { return }
         TouchInputController.shared.receive(device: device, touches: touches, count: count)
     }
@@ -106,6 +68,8 @@ final class TouchInputController: @unchecked Sendable {
         running = false
         tapHandler = nil
         pendingTap = nil
+        startedDeviceCount = 0
+        activeContactCount = 0
         let devicesToStop = devices
         let deviceListToRelease = retainedDeviceList
         devices = []
@@ -127,11 +91,15 @@ final class TouchInputController: @unchecked Sendable {
         os_unfair_lock_unlock(&lock)
         guard shouldRun else { return }
 
-        let newList = MTDeviceCreateList()
+        guard let newListHandle = MTDeviceCreateList() else {
+            Self.logger.error("MTDeviceCreateList returned nil")
+            return
+        }
+        let newList = newListHandle.takeRetainedValue()
         var newDevices: [MTDeviceRef] = []
         for index in 0..<CFArrayGetCount(newList) {
             guard let raw = CFArrayGetValueAtIndex(newList, index) else { continue }
-            newDevices.append(unsafeBitCast(raw, to: MTDeviceRef.self))
+            newDevices.append(raw)
         }
 
         let newKeys = Set(newDevices.map(Self.deviceKey))
@@ -155,6 +123,7 @@ final class TouchInputController: @unchecked Sendable {
         }
         retainedDeviceList = newList
         devices = newDevices
+        startedDeviceCount = 0
         recognizers = Dictionary(
             uniqueKeysWithValues: newDevices.map {
                 (Self.deviceKey($0), ThreeFingerGestureRecognizer())
@@ -164,8 +133,33 @@ final class TouchInputController: @unchecked Sendable {
 
         for device in newDevices {
             MTRegisterContactFrameCallback(device, Self.callback)
-            _ = MTDeviceStart(device, 0)
+            let result = MTDeviceStart(device, 0)
+            os_unfair_lock_lock(&lock)
+            if result == 0 {
+                startedDeviceCount += 1
+            }
+            os_unfair_lock_unlock(&lock)
+            if result != 0 {
+                Self.logger.error("MTDeviceStart failed with status \(result)")
+            }
         }
+        Self.logger.info(
+            "Registered \(newDevices.count) multitouch device(s); \(self.diagnostics().startedDeviceCount) started"
+        )
+    }
+
+    func diagnostics() -> TouchInputDiagnostics {
+        os_unfair_lock_lock(&lock)
+        let snapshot = TouchInputDiagnostics(
+            deviceCount: devices.count,
+            startedDeviceCount: startedDeviceCount,
+            callbackFrameCount: callbackFrameCount,
+            unmatchedFrameCount: unmatchedFrameCount,
+            activeContactCount: activeContactCount,
+            recognizedTapCount: recognizedTapCount
+        )
+        os_unfair_lock_unlock(&lock)
+        return snapshot
     }
 
     /// Associates a native mouse-down with the touch sequence that produced it.
@@ -192,15 +186,16 @@ final class TouchInputController: @unchecked Sendable {
 
     private func receive(
         device: MTDeviceRef,
-        touches: UnsafeMutableRawPointer?,
-        count: Int32
+        touches: UnsafeMutablePointer<MTTouch>?,
+        count: Int
     ) {
-        let contactCount = max(0, Int(count))
+        let contactCount = max(0, count)
         var contacts: [TouchContact] = []
         if let touches, contactCount > 0 {
-            let typedTouches = touches.assumingMemoryBound(to: MTTouch.self)
             contacts.reserveCapacity(contactCount)
-            for touch in UnsafeBufferPointer(start: typedTouches, count: contactCount) {
+            for touch in UnsafeBufferPointer(start: touches, count: contactCount)
+                where TouchContactAdapter.isTouching(state: touch.state)
+            {
                 contacts.append(
                     TouchContact(
                         id: touch.fingerID,
@@ -219,13 +214,21 @@ final class TouchInputController: @unchecked Sendable {
         var tapID: UInt64?
 
         os_unfair_lock_lock(&lock)
+        callbackFrameCount &+= 1
+        activeContactCount = contacts.count
         if running, let recognizer = recognizers[key] {
             let recognizedTap = recognizer.process(frame)
             if recognizedTap {
+                recognizedTapCount &+= 1
                 nextTapID &+= 1
                 let id = nextTapID
                 pendingTap = PendingTap(id: id, deadline: now + 0.035)
                 tapID = id
+            }
+        } else if running {
+            unmatchedFrameCount &+= 1
+            if unmatchedFrameCount == 1 {
+                Self.logger.error("Received a frame for an unregistered multitouch device")
             }
         }
         os_unfair_lock_unlock(&lock)

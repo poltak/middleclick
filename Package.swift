@@ -9,8 +9,14 @@ let package = Package(
         .macOS(.v13),
     ],
     targets: [
+        .target(
+            name: "MultitouchSupportShim",
+            path: "Sources/MultitouchSupportShim",
+            publicHeadersPath: "include"
+        ),
         .executableTarget(
             name: "MiddleClick",
+            dependencies: ["MultitouchSupportShim"],
             linkerSettings: [
                 .unsafeFlags([
                     "-F", "/System/Library/PrivateFrameworks",

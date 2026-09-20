@@ -2,11 +2,13 @@ import ApplicationServices
 import Cocoa
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let mapper = MouseEventMapper()
     private var statusItem: NSStatusItem?
     private var toggleItem: NSMenuItem?
     private var stateItem: NSMenuItem?
+    private var inputDiagnosticsItem: NSMenuItem?
+    private var outputDiagnosticsItem: NSMenuItem?
     private var maintenanceTimer: Timer?
     private var gestureConflict: SystemSettings.GestureConflict?
     private var lastEnableError: MapperError?
@@ -58,6 +60,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.button?.toolTip = "MiddleClick"
 
         let menu = NSMenu()
+        menu.delegate = self
         let toggleItem = NSMenuItem(
             title: "",
             action: #selector(toggleEnabled),
@@ -69,6 +72,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let stateItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
         stateItem.isEnabled = false
         menu.addItem(stateItem)
+
+        let inputDiagnosticsItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        inputDiagnosticsItem.isEnabled = false
+        menu.addItem(inputDiagnosticsItem)
+
+        let outputDiagnosticsItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        outputDiagnosticsItem.isEnabled = false
+        menu.addItem(outputDiagnosticsItem)
         menu.addItem(.separator())
 
         let settingsItem = NSMenuItem(
@@ -92,6 +103,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.statusItem = statusItem
         self.toggleItem = toggleItem
         self.stateItem = stateItem
+        self.inputDiagnosticsItem = inputDiagnosticsItem
+        self.outputDiagnosticsItem = outputDiagnosticsItem
         updateMenu()
     }
 
@@ -129,10 +142,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func updateGesturePolicy() {
         gestureConflict = SystemSettings.gestureConflict
-        mapper.gestureMappingAllowed = gestureConflict == nil
+        switch gestureConflict {
+        case .threeFingerDrag:
+            mapper.tapMappingAllowed = false
+            mapper.physicalClickMappingAllowed = false
+        case .threeFingerLookUp:
+            mapper.tapMappingAllowed = false
+            mapper.physicalClickMappingAllowed = true
+        case nil:
+            mapper.tapMappingAllowed = true
+            mapper.physicalClickMappingAllowed = true
+        }
     }
 
     private func updateMenu() {
+        let diagnostics = mapper.diagnostics()
+        let touch = diagnostics.touchInput
         toggleItem?.title = desiredEnabled ? "Disable MiddleClick" : "Enable MiddleClick"
         if mapper.isEnabled {
             if let gestureConflict {
@@ -141,8 +166,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 case .threeFingerDrag:
                     stateItem?.title = "Paused — Three Finger Drag is on"
                 case .threeFingerLookUp:
-                    stateItem?.title = "Paused — three-finger Look Up is on"
+                    stateItem?.title = "Active — clicks only (three-finger Look Up is on)"
                 }
+            } else if touch.deviceCount == 0 {
+                statusItem?.button?.title = "⊘⊘⊘"
+                stateItem?.title = "No multitouch device detected"
+            } else if touch.startedDeviceCount < touch.deviceCount {
+                statusItem?.button?.title = "⊘⊘⊘"
+                stateItem?.title = "Could not start trackpad input"
+            } else if touch.callbackFrameCount == 0 {
+                statusItem?.button?.title = "•••"
+                stateItem?.title = "Ready — waiting for touch input"
             } else {
                 statusItem?.button?.title = "•••"
                 stateItem?.title = "Active — taps, clicks, and drags"
@@ -159,6 +193,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             statusItem?.button?.title = "⊘⊘⊘"
             stateItem?.title = "Disabled"
         }
+
+        let unmatchedSuffix = touch.unmatchedFrameCount == 0
+            ? ""
+            : " · \(touch.unmatchedFrameCount) unmatched"
+        inputDiagnosticsItem?.title =
+            "Input: \(touch.startedDeviceCount)/\(touch.deviceCount) devices · " +
+            "\(touch.callbackFrameCount) frames · \(touch.activeContactCount) contacts" +
+            unmatchedSuffix
+        outputDiagnosticsItem?.title =
+            "Output: \(diagnostics.emittedTapCount)/\(touch.recognizedTapCount) taps · " +
+            "\(diagnostics.remappedPhysicalClickCount) clicks"
+        inputDiagnosticsItem?.isHidden = !desiredEnabled
+        outputDiagnosticsItem?.isHidden = !desiredEnabled
     }
 
     @objc private func toggleEnabled() {
@@ -187,6 +234,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func quitApp() {
         NSApp.terminate(nil)
+    }
+
+    func menuWillOpen(_ menu: NSMenu) {
+        updateMenu()
     }
 }
 

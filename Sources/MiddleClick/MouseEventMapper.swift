@@ -7,6 +7,12 @@ enum MapperError: Error {
     case eventTapCreationFailed
 }
 
+struct MouseMapperDiagnostics: Sendable {
+    let touchInput: TouchInputDiagnostics
+    let emittedTapCount: UInt64
+    let remappedPhysicalClickCount: UInt64
+}
+
 final class MouseEventMapper: @unchecked Sendable {
     private enum SourceButton {
         case left
@@ -17,8 +23,11 @@ final class MouseEventMapper: @unchecked Sendable {
     private var runLoopSource: CFRunLoopSource?
     private var runLoop: CFRunLoop?
     private var activeSourceButton: SourceButton?
+    private var emittedTapCount: UInt64 = 0
+    private var remappedPhysicalClickCount: UInt64 = 0
     private(set) var isEnabled = false
-    var gestureMappingAllowed = true
+    var tapMappingAllowed = true
+    var physicalClickMappingAllowed = true
 
     func start() throws {
         guard !isEnabled else { return }
@@ -90,6 +99,14 @@ final class MouseEventMapper: @unchecked Sendable {
         TouchInputController.shared.refreshDevices()
     }
 
+    func diagnostics() -> MouseMapperDiagnostics {
+        MouseMapperDiagnostics(
+            touchInput: TouchInputController.shared.diagnostics(),
+            emittedTapCount: emittedTapCount,
+            remappedPhysicalClickCount: remappedPhysicalClickCount
+        )
+    }
+
     private func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
         if type == .tapDisabledByTimeout {
             releaseMiddleButtonIfNeeded()
@@ -108,11 +125,12 @@ final class MouseEventMapper: @unchecked Sendable {
         }
 
         if activeSourceButton == nil,
-           gestureMappingAllowed,
+           physicalClickMappingAllowed,
            let sourceButton = sourceButton(forDownEvent: type),
            TouchInputController.shared.claimMouseClick()
         {
             activeSourceButton = sourceButton
+            remappedPhysicalClickCount &+= 1
             postMiddleEvent(type: .otherMouseDown, copying: event)
             return nil
         }
@@ -136,7 +154,8 @@ final class MouseEventMapper: @unchecked Sendable {
     }
 
     private func emitTap() {
-        guard isEnabled, gestureMappingAllowed, activeSourceButton == nil else { return }
+        guard isEnabled, tapMappingAllowed, activeSourceButton == nil else { return }
+        emittedTapCount &+= 1
         let location = CGEvent(source: nil)?.location ?? NSEvent.mouseLocation
         postMiddleEvent(type: .otherMouseDown, at: location, flags: [])
         postMiddleEvent(type: .otherMouseUp, at: location, flags: [])

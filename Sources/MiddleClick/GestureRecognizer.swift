@@ -26,7 +26,8 @@ final class ThreeFingerGestureRecognizer: @unchecked Sendable {
         var currentContactCount: Int
         var reachedRequiredCount = false
         var maximumContactCount: Int
-        var invalid = false
+        var tapInvalid = false
+        var sawExtraFinger = false
         var consumedByMouseClick = false
     }
 
@@ -39,10 +40,11 @@ final class ThreeFingerGestureRecognizer: @unchecked Sendable {
 
     var hasClaimablePhysicalClick: Bool {
         guard let sequence else { return false }
-        return !sequence.invalid &&
-            !sequence.consumedByMouseClick &&
+        return !sequence.consumedByMouseClick &&
+            !sequence.sawExtraFinger &&
             sequence.currentContactCount == configuration.fingerCount &&
-            sequence.maximumContactCount == configuration.fingerCount
+            sequence.maximumContactCount == configuration.fingerCount &&
+            sequence.origins.count == configuration.fingerCount
     }
 
     func claimPhysicalClick() -> Bool {
@@ -71,30 +73,35 @@ final class ThreeFingerGestureRecognizer: @unchecked Sendable {
         current.maximumContactCount = max(current.maximumContactCount, frame.contacts.count)
 
         let elapsed = max(0, frame.time - current.startedAt)
-        if elapsed > configuration.maximumDuration ||
-            current.maximumContactCount > configuration.fingerCount
-        {
-            current.invalid = true
+        if elapsed > configuration.maximumDuration {
+            current.tapInvalid = true
+        }
+        if current.maximumContactCount > configuration.fingerCount {
+            current.tapInvalid = true
+            current.sawExtraFinger = true
         }
 
         for contact in frame.contacts {
             if let origin = current.origins[contact.id] {
                 if simd_distance(origin, contact.position) > configuration.maximumMovement {
-                    current.invalid = true
+                    current.tapInvalid = true
                 }
             } else {
                 current.origins[contact.id] = contact.position
             }
         }
         if current.origins.count > configuration.fingerCount {
-            current.invalid = true
+            current.tapInvalid = true
+            current.sawExtraFinger = true
         }
 
-        if frame.contacts.count == configuration.fingerCount {
+        if frame.contacts.count == configuration.fingerCount &&
+            !current.reachedRequiredCount
+        {
             if elapsed <= configuration.maximumFingerArrivalInterval {
                 current.reachedRequiredCount = true
             } else {
-                current.invalid = true
+                current.tapInvalid = true
             }
         }
 
@@ -113,7 +120,7 @@ final class ThreeFingerGestureRecognizer: @unchecked Sendable {
         let elapsed = max(0, time - current.startedAt)
         return current.reachedRequiredCount &&
             current.maximumContactCount == configuration.fingerCount &&
-            !current.invalid &&
+            !current.tapInvalid &&
             !current.consumedByMouseClick &&
             elapsed <= configuration.maximumDuration
     }

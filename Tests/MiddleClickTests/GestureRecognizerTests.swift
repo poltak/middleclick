@@ -47,6 +47,23 @@ struct GestureRecognizerTests {
         #expect(!recognizer.process(frame(0.10, [])))
     }
 
+    @Test func tapCanRemainDownPastFingerArrivalWindow() {
+        let recognizer = ThreeFingerGestureRecognizer()
+
+        #expect(!recognizer.process(frame(0.00, contacts(atX: 0.2))))
+        #expect(!recognizer.process(frame(0.20, contacts(atX: 0.2))))
+        #expect(recognizer.process(frame(0.25, [])))
+    }
+
+    @Test func physicalClickCanBeClaimedAfterLongHoldAndMovement() {
+        let recognizer = ThreeFingerGestureRecognizer()
+
+        #expect(!recognizer.process(frame(0.00, contacts(atX: 0.2))))
+        #expect(!recognizer.process(frame(1.00, contacts(atX: 0.4))))
+        #expect(recognizer.claimPhysicalClick())
+        #expect(!recognizer.process(frame(1.10, [])))
+    }
+
     @Test func lateThirdFingerIsRejected() {
         let recognizer = ThreeFingerGestureRecognizer()
 
@@ -74,5 +91,19 @@ struct GestureRecognizerTests {
 
     private func contacts(atX x: Float) -> [TouchContact] {
         [contact(1, x: x), contact(2, x: x), contact(3, x: x)]
+    }
+}
+
+@Suite("Raw touch contact adaptation")
+struct TouchContactAdapterTests {
+    @Test func includesOnlyMakeTouchAndTouchingStates() {
+        #expect(!TouchContactAdapter.isTouching(state: 0))
+        #expect(!TouchContactAdapter.isTouching(state: 1))
+        #expect(!TouchContactAdapter.isTouching(state: 2))
+        #expect(TouchContactAdapter.isTouching(state: 3))
+        #expect(TouchContactAdapter.isTouching(state: 4))
+        #expect(!TouchContactAdapter.isTouching(state: 5))
+        #expect(!TouchContactAdapter.isTouching(state: 6))
+        #expect(!TouchContactAdapter.isTouching(state: 7))
     }
 }

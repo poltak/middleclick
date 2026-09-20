@@ -11,10 +11,11 @@ Simple macOS menu-bar app that turns a **3-finger trackpad click or tap** into a
   events, preserving the pointer location and modifier keys.
 - Tracks each multitouch device independently and reconnects devices after
   sleep or connection changes.
-- Pauses remapping when macOS Three Finger Drag or three-finger Look Up is on,
-  because those system gestures consume the same input.
+- Pauses remapping when macOS Three Finger Drag is on. When three-finger Look
+  Up is on, physical clicks continue to work while tap remapping is paused.
 - Recovers from event-tap timeouts and permission changes without leaving the
   middle button held.
+- Shows live input frame and output counters in the menu for troubleshooting.
 
 ## Build App Bundle
 
@@ -59,6 +60,9 @@ If middle-clicking does not work in some apps, also enable:
 - Keep the app running in the menu bar to keep remapping active.
 - Turn off Three Finger Drag and three-finger Look Up in System Settings to use
   the three-finger middle-click gesture.
+- Locally built apps use an ad-hoc signature with a stable designated
+  requirement. Moving the app or changing its bundle identifier may still
+  require Accessibility permission to be granted again.
 
 ## Tests
 
@@ -66,8 +70,8 @@ If middle-clicking does not work in some apps, also enable:
 swift test
 ```
 
-The tests cover valid staggered taps, swipes, extra fingers, delayed fingers,
-rapid independent taps, and physical-click consumption.
+The tests cover valid staggered and held taps, swipes, raw touch states, extra
+or delayed fingers, rapid independent taps, and physical-click consumption.
 
 ## GitHub Releases
 

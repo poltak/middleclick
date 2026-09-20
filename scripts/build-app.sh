@@ -10,6 +10,7 @@ INSTALL_APP_DIR="/Applications/${APP_NAME}.app"
 INSTALL_TO_APPLICATIONS=false
 VERSION="1.0.0"
 BUILD_NUMBER="1"
+DESIGNATED_REQUIREMENT="=designated => identifier \"${BUNDLE_ID}\""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -81,14 +82,17 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-# Give the bundle a stable code identity for TCC checks.
-codesign --force --deep --sign - --timestamp=none "$APP_DIR"
+# Give ad-hoc local builds a stable designated requirement so rebuilding the
+# same bundle identifier does not replace its TCC identity with a new cdhash.
+codesign --force --deep --sign - --timestamp=none \
+  --requirements "$DESIGNATED_REQUIREMENT" "$APP_DIR"
 
 echo "Built app bundle: $APP_DIR"
 if [[ "$INSTALL_TO_APPLICATIONS" == "true" ]]; then
   rm -rf "$INSTALL_APP_DIR"
   cp -R "$APP_DIR" "$INSTALL_APP_DIR"
-  codesign --force --deep --sign - --timestamp=none "$INSTALL_APP_DIR"
+  codesign --force --deep --sign - --timestamp=none \
+    --requirements "$DESIGNATED_REQUIREMENT" "$INSTALL_APP_DIR"
   echo "Installed app bundle: $INSTALL_APP_DIR"
   echo "Launch with: open '$INSTALL_APP_DIR'"
 else
