@@ -5,8 +5,9 @@ Simple macOS menu-bar app that turns a **3-finger trackpad click or tap** into a
 ## What it does
 
 - Runs as a standard `.app` (`LSUIElement` menu-bar utility).
-- Recognizes a three-finger tap only when exactly three fingers arrive together,
-  remain nearly stationary, and lift within the gesture time limit.
+- Recognizes a three-finger tap when exactly three fingers become active,
+  remain nearly stationary, and lift within the gesture time limit. Staggered
+  finger arrival and liftoff are supported.
 - Converts a physical three-finger press into middle-button down, drag, and up
   events, preserving the pointer location and modifier keys.
 - Tracks each multitouch device independently and reconnects devices after
@@ -70,8 +71,8 @@ If middle-clicking does not work in some apps, also enable:
 swift test
 ```
 
-The tests cover valid staggered and held taps, swipes, raw touch states, extra
-or delayed fingers, rapid independent taps, and physical-click consumption.
+The tests cover valid staggered and held taps, swipes and pinches, raw touch
+states, extra fingers, rapid independent taps, and physical-click consumption.
 
 ## GitHub Releases
 
@@ -102,7 +103,7 @@ This local release build also produces a DMG (`dist/MiddleClick.dmg`) for direct
 
 ## Homebrew (Custom Tap)
 
-Use a cask in your own tap, for example `homebrew-tap/Casks/middleclick.rb`.
+Use the cask in `poltak/homebrew-tap/Casks/middleclick-poltak.rb`.
 
 Each release:
 
