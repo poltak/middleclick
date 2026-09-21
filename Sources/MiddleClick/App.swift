@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var inputDiagnosticsItem: NSMenuItem?
     private var outputDiagnosticsItem: NSMenuItem?
     private var maintenanceTimer: Timer?
+    private var menuRefreshTimer: Timer?
     private var gestureConflict: SystemSettings.GestureConflict?
     private var lastEnableError: MapperError?
 
@@ -50,6 +51,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         maintenanceTimer?.invalidate()
+        menuRefreshTimer?.invalidate()
         NSWorkspace.shared.notificationCenter.removeObserver(self)
         mapper.stop()
     }
@@ -198,11 +200,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             ? ""
             : " · \(touch.unmatchedFrameCount) unmatched"
         inputDiagnosticsItem?.title =
-            "Input: \(touch.startedDeviceCount)/\(touch.deviceCount) devices · " +
-            "\(touch.callbackFrameCount) frames · \(touch.activeContactCount) contacts" +
+            "Devices: \(touch.startedDeviceCount)/\(touch.deviceCount) · " +
+            "\(touch.callbackFrameCount) touches · \(touch.activeContactCount) fingers" +
             unmatchedSuffix
         outputDiagnosticsItem?.title =
-            "Output: \(diagnostics.emittedTapCount)/\(touch.recognizedTapCount) taps · " +
+            "Three fingers: \(touch.recognizedTapCount) taps · " +
             "\(diagnostics.remappedPhysicalClickCount) clicks"
         inputDiagnosticsItem?.isHidden = !desiredEnabled
         outputDiagnosticsItem?.isHidden = !desiredEnabled
@@ -238,6 +240,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func menuWillOpen(_ menu: NSMenu) {
         updateMenu()
+        menuRefreshTimer?.invalidate()
+        let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.updateMenu()
+            }
+        }
+        menuRefreshTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        menuRefreshTimer?.invalidate()
+        menuRefreshTimer = nil
     }
 }
 
