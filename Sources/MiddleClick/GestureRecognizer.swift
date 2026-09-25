@@ -15,6 +15,81 @@ struct GestureConfiguration: Equatable, Sendable {
     var fingerCount = 3
     var maximumDuration: TimeInterval = 0.45
     var maximumMovement: Float = 0.05
+    /// Trial limits in normalized coordinates, not physical trackpad units.
+    var edgeOutlierDistanceThreshold: Float = 0.30
+    var edgeBoundaryBand: Float = 0.01
+}
+
+struct EdgeOutlierAssessment: Equatable, Sendable {
+    let closestPairDistance: Float
+    let outlierDistance: Float?
+    let distanceThreshold: Float
+    let boundaryBand: Float
+    let closestPairIsUnique: Bool
+    let contactAtBoundary: Bool?
+    let rejected: Bool
+
+    static func assess(
+        contacts: [TouchContact],
+        configuration: GestureConfiguration
+    ) -> Self? {
+        guard configuration.fingerCount == 3, contacts.count == 3 else { return nil }
+
+        let positions = contacts.map(\.position)
+        var pairDistances: [(first: Int, second: Int, distance: Float)] = []
+        for first in 0..<(positions.count - 1) {
+            for second in (first + 1)..<positions.count {
+                pairDistances.append((
+                    first,
+                    second,
+                    simd_distance(positions[first], positions[second])
+                ))
+            }
+        }
+
+        guard let closestPairDistance = pairDistances.map({ $0.distance }).min() else {
+            return nil
+        }
+        let tiedPairs = pairDistances.filter {
+            abs($0.distance - closestPairDistance) <= 0.000_001
+        }
+        guard tiedPairs.count == 1, let closestPair = tiedPairs.first else {
+            return Self(
+                closestPairDistance: closestPairDistance,
+                outlierDistance: nil,
+                distanceThreshold: configuration.edgeOutlierDistanceThreshold,
+                boundaryBand: configuration.edgeBoundaryBand,
+                closestPairIsUnique: false,
+                contactAtBoundary: nil,
+                rejected: false
+            )
+        }
+
+        guard let outlierIndex = (0..<positions.count).first(where: {
+            $0 != closestPair.first && $0 != closestPair.second
+        }) else { return nil }
+        let outlierPosition = positions[outlierIndex]
+        let outlierDistance = min(
+            simd_distance(outlierPosition, positions[closestPair.first]),
+            simd_distance(outlierPosition, positions[closestPair.second])
+        )
+        let band = configuration.edgeBoundaryBand
+        let contactAtBoundary = outlierPosition.x <= band ||
+            outlierPosition.x >= 1 - band ||
+            outlierPosition.y <= band ||
+            outlierPosition.y >= 1 - band
+
+        return Self(
+            closestPairDistance: closestPairDistance,
+            outlierDistance: outlierDistance,
+            distanceThreshold: configuration.edgeOutlierDistanceThreshold,
+            boundaryBand: band,
+            closestPairIsUnique: true,
+            contactAtBoundary: contactAtBoundary,
+            rejected: outlierDistance > configuration.edgeOutlierDistanceThreshold &&
+                contactAtBoundary
+        )
+    }
 }
 
 /// Recognizes one complete gesture on one physical multitouch device.
@@ -77,6 +152,12 @@ final class ThreeFingerGestureRecognizer: @unchecked Sendable {
         if current.maximumContactCount > configuration.fingerCount {
             current.tapInvalid = true
             current.sawExtraFinger = true
+        }
+        if EdgeOutlierAssessment.assess(
+            contacts: frame.contacts,
+            configuration: configuration
+        )?.rejected == true {
+            current.tapInvalid = true
         }
 
         if let referencePositions = current.referencePositions {

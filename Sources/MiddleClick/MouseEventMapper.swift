@@ -17,6 +17,13 @@ final class MouseEventMapper: @unchecked Sendable {
     private enum SourceButton {
         case left
         case right
+
+        var label: String {
+            switch self {
+            case .left: "left"
+            case .right: "right"
+            }
+        }
     }
 
     private var eventTap: CFMachPort?
@@ -26,8 +33,12 @@ final class MouseEventMapper: @unchecked Sendable {
     private var emittedTapCount: UInt64 = 0
     private var remappedPhysicalClickCount: UInt64 = 0
     private(set) var isEnabled = false
-    var tapMappingAllowed = true
-    var physicalClickMappingAllowed = true
+    var tapMappingAllowed = true {
+        didSet { if oldValue != tapMappingAllowed { recordTraceSettings() } }
+    }
+    var physicalClickMappingAllowed = true {
+        didSet { if oldValue != physicalClickMappingAllowed { recordTraceSettings() } }
+    }
 
     func start() throws {
         guard !isEnabled else { return }
@@ -38,6 +49,7 @@ final class MouseEventMapper: @unchecked Sendable {
         let eventTypes: [CGEventType] = [
             .leftMouseDown, .leftMouseUp, .leftMouseDragged,
             .rightMouseDown, .rightMouseUp, .rightMouseDragged,
+            .scrollWheel,
         ]
         let mask = eventTypes.reduce(CGEventMask(0)) {
             $0 | (CGEventMask(1) << $1.rawValue)
@@ -72,9 +84,10 @@ final class MouseEventMapper: @unchecked Sendable {
         activeSourceButton = nil
         isEnabled = true
         CGEvent.tapEnable(tap: eventTap, enable: true)
+        recordTraceSettings()
 
-        TouchInputController.shared.start { [weak self] in
-            self?.emitTap()
+        TouchInputController.shared.start { [weak self] tapID in
+            self?.emitTap(tapID: tapID)
         }
     }
 
@@ -92,6 +105,7 @@ final class MouseEventMapper: @unchecked Sendable {
         eventTap = nil
         runLoop = nil
         isEnabled = false
+        recordTraceSettings()
     }
 
     func refreshDevices() {
@@ -107,7 +121,25 @@ final class MouseEventMapper: @unchecked Sendable {
         )
     }
 
+    func recordTraceSettings() {
+        GestureTraceRecorder.shared.recordSettings(
+            at: ProcessInfo.processInfo.systemUptime,
+            mapperEnabled: isEnabled,
+            tapMappingAllowed: tapMappingAllowed,
+            physicalClickMappingAllowed: physicalClickMappingAllowed
+        )
+    }
+
     private func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
+        if type == .scrollWheel {
+            GestureTraceRecorder.shared.recordScroll(
+                at: ProcessInfo.processInfo.systemUptime,
+                deltaX: event.getIntegerValueField(.scrollWheelEventDeltaAxis2),
+                deltaY: event.getIntegerValueField(.scrollWheelEventDeltaAxis1)
+            )
+            return Unmanaged.passUnretained(event)
+        }
+
         if type == .tapDisabledByTimeout {
             releaseMiddleButtonIfNeeded()
             if let eventTap {
@@ -124,15 +156,25 @@ final class MouseEventMapper: @unchecked Sendable {
             return Unmanaged.passUnretained(event)
         }
 
-        if activeSourceButton == nil,
-           physicalClickMappingAllowed,
-           let sourceButton = sourceButton(forDownEvent: type),
-           TouchInputController.shared.claimMouseClick()
-        {
-            activeSourceButton = sourceButton
-            remappedPhysicalClickCount &+= 1
-            postMiddleEvent(type: .otherMouseDown, copying: event)
-            return nil
+        if activeSourceButton == nil, let sourceButton = sourceButton(forDownEvent: type) {
+            let mappingAllowed = physicalClickMappingAllowed
+            let claim = mappingAllowed ? TouchInputController.shared.claimMouseClick() : nil
+            GestureTraceRecorder.shared.recordMouseButton(
+                at: ProcessInfo.processInfo.systemUptime,
+                stage: "down",
+                button: sourceButton.label,
+                mappingAllowed: mappingAllowed,
+                claimed: claim != nil,
+                tapID: claim?.tapID,
+                source: claim?.source,
+                suppressed: claim != nil
+            )
+            if claim != nil {
+                activeSourceButton = sourceButton
+                remappedPhysicalClickCount &+= 1
+                postMiddleEvent(type: .otherMouseDown, copying: event)
+                return nil
+            }
         }
 
         guard let activeSourceButton else {
@@ -140,11 +182,29 @@ final class MouseEventMapper: @unchecked Sendable {
         }
 
         if isDrag(type, for: activeSourceButton) {
+            GestureTraceRecorder.shared.recordMouseButton(
+                at: ProcessInfo.processInfo.systemUptime,
+                stage: "drag",
+                button: activeSourceButton.label,
+                mappingAllowed: physicalClickMappingAllowed,
+                claimed: true,
+                source: "middleClickFromPhysicalMouse",
+                suppressed: true
+            )
             postMiddleEvent(type: .otherMouseDragged, copying: event)
             return nil
         }
 
         if isUp(type, for: activeSourceButton) {
+            GestureTraceRecorder.shared.recordMouseButton(
+                at: ProcessInfo.processInfo.systemUptime,
+                stage: "up",
+                button: activeSourceButton.label,
+                mappingAllowed: physicalClickMappingAllowed,
+                claimed: true,
+                source: "middleClickFromPhysicalMouse",
+                suppressed: true
+            )
             postMiddleEvent(type: .otherMouseUp, copying: event)
             self.activeSourceButton = nil
             return nil
@@ -153,9 +213,40 @@ final class MouseEventMapper: @unchecked Sendable {
         return Unmanaged.passUnretained(event)
     }
 
-    private func emitTap() {
-        guard isEnabled, tapMappingAllowed, activeSourceButton == nil else { return }
+    private func emitTap(tapID: UInt64) {
+        guard isEnabled else {
+            GestureTraceRecorder.shared.recordTapOutput(
+                at: ProcessInfo.processInfo.systemUptime,
+                tapID: tapID,
+                emitted: false,
+                reason: "mapperDisabled"
+            )
+            return
+        }
+        guard tapMappingAllowed else {
+            GestureTraceRecorder.shared.recordTapOutput(
+                at: ProcessInfo.processInfo.systemUptime,
+                tapID: tapID,
+                emitted: false,
+                reason: "tapMappingDisabled"
+            )
+            return
+        }
+        guard activeSourceButton == nil else {
+            GestureTraceRecorder.shared.recordTapOutput(
+                at: ProcessInfo.processInfo.systemUptime,
+                tapID: tapID,
+                emitted: false,
+                reason: "physicalClickAlreadyActive"
+            )
+            return
+        }
         emittedTapCount &+= 1
+        GestureTraceRecorder.shared.recordTapOutput(
+            at: ProcessInfo.processInfo.systemUptime,
+            tapID: tapID,
+            emitted: true
+        )
         let pointerEvent = CGEvent(source: nil)
         let location = pointerEvent?.location ?? NSEvent.mouseLocation
         let flags = pointerEvent?.flags ?? []

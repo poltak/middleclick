@@ -8,6 +8,8 @@ Simple macOS menu-bar app that turns a **3-finger trackpad click or tap** into a
 - Recognizes a three-finger tap when exactly three fingers become active,
   remain nearly stationary, and lift within the gesture time limit. Staggered
   finger arrival and liftoff are supported.
+- Rejects a synthetic tap when one contact is isolated near a trackpad edge.
+  A valid tap with widely spread fingers near an edge can also be rejected.
 - Converts a physical three-finger press into middle-button down, drag, and up
   events, preserving the pointer location and modifier keys.
 - Tracks each multitouch device independently and reconnects devices after
@@ -17,6 +19,8 @@ Simple macOS menu-bar app that turns a **3-finger trackpad click or tap** into a
 - Recovers from event-tap timeouts and permission changes without leaving the
   middle button held.
 - Shows live input frame and output counters in the menu for troubleshooting.
+- Can record an opt-in gesture trace in memory for debugging. See
+  [Gesture recording](docs/gesture-recording.md).
 
 ## Build App Bundle
 
@@ -55,6 +59,13 @@ If middle-clicking does not work in some apps, also enable:
 - `System Settings -> Privacy & Security -> Input Monitoring`
 - Add/enable `MiddleClick.app`.
 
+## Gesture recording
+
+Use your installed copy of MiddleClick to record an intermittent false
+middle-click. Choose **Start Gesture Recording** from the menu, reproduce the
+issue, then choose **Stop and Save Recording…**. Follow the
+[gesture recording guide](docs/gesture-recording.md) for steps and trace details.
+
 ## Notes
 
 - Uses a private Apple framework (`MultitouchSupport`), so this is not App Store safe.
@@ -77,10 +88,11 @@ states, extra fingers, rapid independent taps, and physical-click consumption.
 ## GitHub Releases
 
 Every push to `main` runs the tests and publishes a GitHub release. The workflow
-increments the patch component of the latest semantic-version tag, so a push
-after `v0.2.0` creates `v0.2.1` automatically.
+increments the patch component of the latest semantic-version tag. For example,
+a push after `v1.2.3` creates `v1.2.4` automatically.
 
-The GitHub Actions workflow at `/Users/jon/Documents/github/middleclick/.github/workflows/release.yml` will:
+The GitHub Actions workflow at
+[`.github/workflows/release.yml`](.github/workflows/release.yml) will:
 
 - Run the test suite
 - Create the next patch-version tag
@@ -106,7 +118,8 @@ Use the cask in `poltak/homebrew-tap/Casks/middleclick-poltak.rb`.
 
 Each release:
 
-1. Copy the generated `/Users/jon/Documents/github/middleclick/dist/middleclick-poltak.rb` into your tap repo at `Casks/middleclick-poltak.rb`.
+1. Copy `dist/middleclick-poltak.rb` from this repository to
+   `Casks/middleclick-poltak.rb` in your tap repository.
 2. Commit and push in the tap repo.
 3. Users can install with:
 

@@ -1,5 +1,6 @@
 import ApplicationServices
 import Cocoa
+import UniformTypeIdentifiers
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
@@ -9,6 +10,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var stateItem: NSMenuItem?
     private var inputDiagnosticsItem: NSMenuItem?
     private var outputDiagnosticsItem: NSMenuItem?
+    private var recordingStateItem: NSMenuItem?
+    private var startRecordingItem: NSMenuItem?
+    private var stopAndSaveRecordingItem: NSMenuItem?
     private var maintenanceTimer: Timer?
     private var menuRefreshTimer: Timer?
     private var gestureConflict: SystemSettings.GestureConflict?
@@ -62,6 +66,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem.button?.toolTip = "MiddleClick"
 
         let menu = NSMenu()
+        menu.autoenablesItems = false
         menu.delegate = self
         let toggleItem = NSMenuItem(
             title: "",
@@ -82,6 +87,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let outputDiagnosticsItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
         outputDiagnosticsItem.isEnabled = false
         menu.addItem(outputDiagnosticsItem)
+        menu.addItem(.separator())
+
+        let recordingStateItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        recordingStateItem.isEnabled = false
+        menu.addItem(recordingStateItem)
+
+        let startRecordingItem = NSMenuItem(
+            title: "Start Gesture Recording",
+            action: #selector(startGestureRecording),
+            keyEquivalent: ""
+        )
+        startRecordingItem.target = self
+        menu.addItem(startRecordingItem)
+
+        let stopAndSaveRecordingItem = NSMenuItem(
+            title: "Stop and Save Recording…",
+            action: #selector(stopAndSaveGestureRecording),
+            keyEquivalent: ""
+        )
+        stopAndSaveRecordingItem.target = self
+        menu.addItem(stopAndSaveRecordingItem)
         menu.addItem(.separator())
 
         let settingsItem = NSMenuItem(
@@ -107,6 +133,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         self.stateItem = stateItem
         self.inputDiagnosticsItem = inputDiagnosticsItem
         self.outputDiagnosticsItem = outputDiagnosticsItem
+        self.recordingStateItem = recordingStateItem
+        self.startRecordingItem = startRecordingItem
+        self.stopAndSaveRecordingItem = stopAndSaveRecordingItem
         updateMenu()
     }
 
@@ -208,6 +237,73 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             "\(diagnostics.remappedPhysicalClickCount) clicks"
         inputDiagnosticsItem?.isHidden = !desiredEnabled
         outputDiagnosticsItem?.isHidden = !desiredEnabled
+
+        let recorder = GestureTraceRecorder.shared
+        if recorder.isRecording {
+            recordingStateItem?.title = "Gesture recording: Recording"
+        } else if recorder.hasRecording {
+            recordingStateItem?.title = "Gesture recording: Stopped — save pending"
+        } else {
+            recordingStateItem?.title = "Gesture recording: Off"
+        }
+        startRecordingItem?.isEnabled =
+            mapper.isEnabled && !recorder.isRecording && !recorder.hasRecording
+        stopAndSaveRecordingItem?.title = recorder.isRecording
+            ? "Stop and Save Recording…"
+            : "Save Recording…"
+        stopAndSaveRecordingItem?.isEnabled = recorder.isRecording || recorder.hasRecording
+    }
+
+    @objc private func startGestureRecording() {
+        let recorder = GestureTraceRecorder.shared
+        guard mapper.isEnabled, !recorder.isRecording, !recorder.hasRecording else { return }
+        recorder.start()
+        mapper.recordTraceSettings()
+        updateMenu()
+    }
+
+    @objc private func stopAndSaveGestureRecording() {
+        let recorder = GestureTraceRecorder.shared
+        if recorder.isRecording {
+            recorder.stop()
+        }
+        guard recorder.hasRecording else {
+            updateMenu()
+            return
+        }
+
+        updateMenu()
+        NSApp.activate(ignoringOtherApps: true)
+        let panel = NSSavePanel()
+        panel.title = "Save Gesture Recording"
+        panel.nameFieldStringValue = "middleclick-gesture-trace.json"
+        panel.allowedContentTypes = [.json]
+        panel.canCreateDirectories = true
+
+        guard panel.runModal() == .OK, let url = panel.url else {
+            updateMenu()
+            return
+        }
+
+        do {
+            guard let data = try recorder.recordingData() else {
+                throw GestureRecordingSaveError.noRecordingData
+            }
+            try data.write(to: url, options: .atomic)
+            recorder.clear()
+        } catch {
+            showRecordingSaveError(error)
+        }
+        updateMenu()
+    }
+
+    private func showRecordingSaveError(_ error: Error) {
+        let alert = NSAlert()
+        alert.alertStyle = .critical
+        alert.messageText = "Could not save the gesture recording."
+        alert.informativeText = error.localizedDescription
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
     }
 
     @objc private func toggleEnabled() {
@@ -253,6 +349,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func menuDidClose(_ menu: NSMenu) {
         menuRefreshTimer?.invalidate()
         menuRefreshTimer = nil
+    }
+}
+
+private enum GestureRecordingSaveError: LocalizedError {
+    case noRecordingData
+
+    var errorDescription: String? {
+        "There is no stopped gesture recording to save."
     }
 }
 
